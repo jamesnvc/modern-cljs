@@ -93,65 +93,49 @@ The function simply creates a channel called out, uses the domina `listen!`
 function to register a callback which will put the recieved event into the
 channel, then returns the new channel.
 
-With this function in place, we can define our function to asynchronously check
+Next, we'll define a helper function which will create a channel of the
+validation errors for a given field.
+
+```clojure
+(defn errors-for [field]
+  (map< (fn [evt]
+          (or (validate-field (keyword field) (.-value (:target evt)))
+              []))
+        (listen (by-id field) :change)))
+```
+
+The `map<` function takes events recieved on the channel created by `listen`
+and uses the `validate-field` function to create a channel of error vectors
+(note that we replace nils with empty lists to avoid inadvertently indicating
+that the channel is exhausted).
+
+With these functions in place, we can define our function to asynchronously check
 a given field.
 
 ```clojure
-(defn check-field [field]
-  (let [errs-chan (map< (fn [evt]
-                          (validate-field (keyword field) (.-value (:target evt))))
-                        (listen (by-id field) :change))
-        label (xpath (str "//label[@for='" field "']"))
+(defn check-field [field errs-chan]
+  (let [label (xpath (str "//label[@for='" field "']"))
         title (text label)]
     (go-loop
       []
       (let [errs (<! errs-chan)]
-        (if errs
-          (-> label (add-class! "error") (set-text! (first errs)))
-          (-> label (remove-class! "error") (set-text! title)))
+        (if (empty? errs)
+          (-> label (remove-class! "error") (set-text! title))
+          (-> label (add-class! "error") (set-text! (first errs))))
         (recur)))))
 ```
 
-This function is doing quite a few things, so let's break it down.
+This function recieves the name of the field and a channel of errors (which
+we'll create with `(errors-for field)`).  We get the corresponding label for the
+input field and keep track of what it's original title should be, then spawn our
+go-routine with `go-loop`.
 
-First, it creates a channel which will recieve errors for the field:
-
-```clojure
-  (let [errs-chan (map< (fn [evt]
-                          (validate-field (keyword field) (.-value (:target evt))))
-                        (listen (by-id field) :change))
-```
-
-The `map&lt;` function takes events recieved on the channel created by `listen`
-and uses the `validate-field` function to create a channel of `nil`s and error
-vectors.
-
-```clojure
-        label (xpath (str "//label[@for='" field "']"))
-        title (text label)]
-```
-
-We get the `&lt;label&gt;` element associated with the given field using an
-xpath selector and keep track of what the "default" value of the label should
-be.
-
-```clojure
-(go-loop
-      []
-      (let [errs (<! errs-chan)]
-        (if errs
-          (-> label (add-class! "error") (set-text! (first errs)))
-          (-> label (remove-class! "error") (set-text! title)))
-        (recur)))
-```
-
-Now, the meat of the function is the "go-routine" we create.  Like in the
-Go language, this creates an asynchronous process which can wait for inputs on a
-channel without blocking anything else.  Instead of using the basic `go` macro,
-we use `go-loop`, equivalent to `(go (loop ...``, since we want to keep
-processing events forever.  The routine will wait for an error to come in on the
-previously-created channel `errs-chan`, then either display an error message in
-the label or restore the original state of the label.
+Like in the Go language, this creates an asynchronous process which can wait for
+inputs on a channel without blocking anything else.  Instead of using the basic
+`go` macro, we use `go-loop`, equivalent to `(go (loop ...`, since we want to
+keep processing events forever.  The routine will wait for an error to come in
+on the `errs-chan` channel, then either display an error message in the label or
+restore the original state of the label.
 
 Now, we can create one of these goroutines for each field in the form in `init`
 with a simple loop over the ids of the fields.
@@ -162,7 +146,7 @@ with a simple loop over the ids of the fields.
              (aget js/document "getElementById"))
     (loop [fields '("quantity" "price" "tax" "discount")]
       (when (not (empty? fields))
-        (check-field (first fields))
+        (check-field (first fields) (errors-for (first fields)))
         (recur (rest fields))))
     (listen! (by-id "calc") :click (fn [evt] (calculate evt)))
     (listen! (by-id "calc") :mouseover add-help!)

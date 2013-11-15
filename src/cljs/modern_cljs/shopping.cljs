@@ -8,7 +8,7 @@
             [hiccups.runtime :as hiccupsrt]
             [shoreleave.remotes.http-rpc :refer [remote-callback]]
             [modern-cljs.shopping.validators :refer [validate-field]]
-            [cljs.core.async :refer [put! chan >! <! map<]]))
+            [cljs.core.async :refer [put! chan >! <! map< merge]]))
 
 (defn calculate [evt]
   (let [quantity (value (by-id "quantity"))
@@ -33,18 +33,21 @@
     (listen! el type (partial put! out))
     out))
 
-(defn check-field [field]
-  (let [errs-chan (map< (fn [evt]
-                          (validate-field (keyword field) (.-value (:target evt))))
-                        (listen (by-id field) :change))
-        label (xpath (str "//label[@for='" field "']"))
+(defn errors-for [field]
+  (map< (fn [evt]
+          (or (validate-field (keyword field) (.-value (:target evt)))
+              []))
+        (listen (by-id field) :change)))
+
+(defn check-field [field errs-chan]
+  (let [label (xpath (str "//label[@for='" field "']"))
         title (text label)]
     (go-loop
       []
       (let [errs (<! errs-chan)]
-        (if errs
-          (-> label (add-class! "error") (set-text! (first errs)))
-          (-> label (remove-class! "error") (set-text! title)))
+        (if (empty? errs)
+          (-> label (remove-class! "error") (set-text! title))
+          (-> label (add-class! "error") (set-text! (first errs))))
         (recur)))))
 
 (defn ^:export init []
@@ -52,7 +55,7 @@
              (aget js/document "getElementById"))
     (loop [fields '("quantity" "price" "tax" "discount")]
       (when (not (empty? fields))
-        (check-field (first fields))
+        (check-field (first fields) (errors-for (first fields)))
         (recur (rest fields))))
     (listen! (by-id "calc") :click (fn [evt] (calculate evt)))
     (listen! (by-id "calc") :mouseover add-help!)
