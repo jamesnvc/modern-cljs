@@ -144,10 +144,11 @@ with a simple loop over the ids of the fields.
 (defn ^:export init []
   (when (and js/document
              (aget js/document "getElementById"))
-    (loop [fields '("quantity" "price" "tax" "discount")]
-      (when (not (empty? fields))
+    (let [fields '("quantity" "price" "tax" "discount")]
+      (loop [fields fields]
+       (when (not (empty? fields))
         (check-field (first fields) (errors-for (first fields)))
-        (recur (rest fields))))
+        (recur (rest fields)))))
     (listen! (by-id "calc") :click (fn [evt] (calculate evt)))
     (listen! (by-id "calc") :mouseover add-help!)
     (listen! (by-id "calc") :mouseout remove-help!)))
@@ -163,6 +164,97 @@ After rebuild, go to the [shopping url][3] (making sure Javascript is enabled
 now) and try putting some values in the form.  You'll see that if you put an
 invalid value in one of the fields, a message will appear as soon as you leave
 the input and go away once corrected.
+
+## Automatic updates
+
+Now that we have our error messages appearing right away, it's starting to feel
+clunky to have to click the "Calculate" button every time we make a change.
+Let's leverage the techniques we've just learned to automatically recalculate
+the total when the values change.  The one complication, however, is that we
+don't want to try to calculate a new total if any of the fields are invalid.
+
+First, we'll need to add the `merge` function from `core.async` to our list of
+requires:
+
+```clojure
+(ns modern-cljs.shopping
+  ...
+  (:require ,,,
+            [cljs.core.async :refer [put! chan >! <! map< merge]]))
+```
+
+Next, we'll need to make some slight modifications to the `calculate` function.
+As it currently exists, the function takes in the domina event so it can prevent
+the form from submitting.  However, if we're going to make the button completely
+unnecessary, so let's just remove it.  We remove the `evt` paramater and the
+call to `prevent-default` from `calculate` so it looks like this:
+
+```clojure
+(defn calculate []
+  (let [quantity (value (by-id "quantity"))
+        price (value (by-id "price"))
+        tax (value (by-id "tax"))
+        discount (value (by-id "discount"))]
+    (remote-callback :calculate
+                     [quantity price tax discount]
+                     #(set-value! (by-id "total") (.toFixed % 2)))))
+```
+
+Next, we remove the `listen!` calls in `init` and replace them with a call to
+`destroy!`:
+
+```clojure
+(defn ^:export init []
+  (when (and js/document
+             (aget js/document "getElementById"))
+    (let [fields '("quantity" "price" "tax" "discount")]
+      (loop [fields fields]
+        (when (not (empty? fields))
+          (check-field (first fields) (errors-for (first fields)))
+          (recur (rest fields)))))
+    (destroy! (by-id "calc"))))
+```
+
+Now, we're ready to add our function to recalculate the total automatically.
+
+```clojure
+(defn recalc-total [errs-chan]
+  (go-loop
+    [err-fields #{}]
+    (let [[field errs] (<! errs-chan)]
+      (when (not (empty? errs))
+        (recur (conj err-fields field)))
+      (let [rest-errs (disj err-fields field)]
+        (when (empty? rest-errs)
+          (calculate))
+        (recur rest-errs)))))
+```
+
+This function will also receive a channel which will get form errors.  Unlike
+`check-field` though, the channel for `recalc-total` will contain values which
+are vectors like `[field-name error-vector]`.  This way it can keep track of
+which fields are in an invalid state and only update when all the fields are
+copacetic.
+
+Lastly, we'll need to create a channel to feed this function, which will do
+using `map<` and `cljs.core.async/merge` in `init` as follows:
+
+```clojure
+(defn ^:export init []
+  (when (and js/document
+             (aget js/document "getElementById"))
+    (let [fields '("quantity" "price" "tax" "discount")
+          all-field-errs (map (fn [field] (map< #(vector field %) (errors-for field))) fields)]
+      (recalc-total (merge all-field-errs))
+      (loop [fields fields]
+        (when (not (empty? fields))
+          (check-field (first fields) (errors-for (first fields)))
+          (recur (rest fields)))))
+    (destroy! (by-id "calc"))))
+```
+
+Now, run `lein compile` and refresh and you will see the shopping form
+automatically updating the total whenever a valid change is made.
 
 [1]: http://clojure.github.io/core.async/
 [2]: http://golang.org/
