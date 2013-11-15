@@ -256,6 +256,14 @@ using `map<` and `cljs.core.async/merge` in `init` as follows:
 Now, run `lein compile` and refresh and you will see the shopping form
 automatically updating the total whenever a valid change is made.
 
+# Next Step
+
+TO BE DONE
+
+# License
+
+By James Cash, for Mimmo Cosenza to do whatever he wishes with.
+
 [1]: http://clojure.github.io/core.async/
 [2]: http://golang.org/
 [3]: http://localhost:3000/shopping.html
